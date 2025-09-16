@@ -1,165 +1,142 @@
 # pmas/agents/data_agent.py
-"""
-DataAgent for FairLens demo
-Supports:
-  - Pima Indians Diabetes
-  - Adult Income dataset
-Returns clean dict with train_df, features, label, and protected.
-"""
-
-from pathlib import Path
+import os
 import pandas as pd
-import logging
-
-LOG = logging.getLogger(__name__)
-
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.impute import SimpleImputer
 
 class DataAgent:
-    # -----------------
-    # Known sources
-    # -----------------
+    """
+    Loads datasets (Pima Diabetes or Adult Income), preprocesses them into train/test,
+    ensures numeric input (via get_dummies + imputation), and sets sensitive features.
+    """
+
     PIMA_URLS = [
         "https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv",
         "https://raw.githubusercontent.com/selva86/datasets/master/PimaIndiansDiabetes.csv",
     ]
-    PIMA_COLS = [
-        "pregnant", "glucose", "pressure", "triceps", "insulin",
-        "mass", "pedigree", "age", "y"
-    ]
-
     ADULT_URLS = [
         "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
         "https://raw.githubusercontent.com/selva86/datasets/master/Adult.csv",
-        "https://raw.githubusercontent.com/jbrownlee/Datasets/master/adult.csv",
-    ]
-    ADULT_COLS = [
-        "age", "workclass", "fnlwgt", "education", "education_num",
-        "marital_status", "occupation", "relationship", "race", "sex",
-        "capital_gain", "capital_loss", "hours_per_week", "native_country", "y"
     ]
 
-    def __init__(self):
-        self.data_dir = Path("data")
-        self.data_dir.mkdir(exist_ok=True)
+    def __init__(self, data_dir="data"):
+        self.data_dir = data_dir
+        os.makedirs(self.data_dir, exist_ok=True)
 
-    # -----------------
-    # Main entry
-    # -----------------
-    def perform(self, action: str, params: dict = None, state: dict = None):
-        params = params or {}
-        dataset = params.get("dataset", "Pima")
+    # ----------------------------
+    # Dataset loaders
+    # ----------------------------
+    def _load_pima(self, use_cache_only=False):
+        cache_path = os.path.join(self.data_dir, "pima_diabetes.csv")
+        if os.path.exists(cache_path):
+            df = pd.read_csv(cache_path)
+        elif not use_cache_only:
+            for url in self.PIMA_URLS:
+                try:
+                    df = pd.read_csv(url, header=None)
+                    if df.shape[1] == 9:
+                        df.columns = [
+                            "preg", "glucose", "bp", "skin", "insulin",
+                            "bmi", "pedigree", "age", "y"
+                        ]
+                        df.to_csv(cache_path, index=False)
+                        break
+                except Exception:
+                    continue
+            else:
+                raise RuntimeError("Failed to download Pima dataset.")
+        else:
+            raise RuntimeError("Pima dataset not available in cache.")
+        return df
+
+    def _load_adult(self, use_cache_only=False):
+        cache_path = os.path.join(self.data_dir, "adult.csv")
+        if os.path.exists(cache_path):
+            df = pd.read_csv(cache_path, header=None)
+        elif not use_cache_only:
+            for url in self.ADULT_URLS:
+                try:
+                    df = pd.read_csv(url, header=None)
+                    df.to_csv(cache_path, index=False)
+                    break
+                except Exception:
+                    continue
+            else:
+                raise RuntimeError("Failed to download Adult dataset.")
+        else:
+            raise RuntimeError("Adult dataset not available in cache.")
+
+        # Assign column names
+        df.columns = [
+            "age", "workclass", "fnlwgt", "education", "education_num",
+            "marital_status", "occupation", "relationship", "race", "sex",
+            "capital_gain", "capital_loss", "hours_per_week", "native_country", "income"
+        ]
+
+        # Strip whitespace
+        df = df.applymap(lambda x: x.strip() if isinstance(x, str) else x)
+
+        # Binary target
+        df["y"] = (df["income"] == ">50K").astype(int)
+        df = df.drop(columns=["income"])
+        return df
+
+    # ----------------------------
+    # Preprocessing
+    # ----------------------------
+    def _preprocess(self, df, dataset):
+        if dataset == "Pima Diabetes":
+            df["age_group"] = (df["age"] >= 30).astype(int)
+            features = [c for c in df.columns if c != "y"]
+            sensitive_name = "age_group"
+
+        elif dataset == "Adult Income":
+            df["sex_bin"] = (df["sex"] == "Male").astype(int)
+            sensitive_name = "sex_bin"
+
+            # One-hot encode categoricals
+            df = pd.get_dummies(df, columns=[
+                "workclass", "education", "marital_status",
+                "occupation", "relationship", "race", "sex", "native_country"
+            ], drop_first=True)
+
+            # define features after encoding
+            features = [c for c in df.columns if c != "y"]
+
+        else:
+            raise RuntimeError(f"Unknown dataset {dataset}")
+
+        # Impute only numeric columns
+        imputer = SimpleImputer(strategy="mean")
+        df[features] = imputer.fit_transform(df[features])
+
+        return df, features, sensitive_name
+
+    # ----------------------------
+    # Perform interface
+    # ----------------------------
+    def perform(self, action, params, state=None):
+        if action != "load":
+            raise NotImplementedError(action)
+        dataset = params.get("dataset", "Pima Diabetes")
         use_cache_only = params.get("use_cache_only", False)
 
-        if action == "load":
-            if str(dataset).lower().startswith("pima"):
-                df = self._load_pima(use_cache_only)
-                features = [c for c in df.columns if c != "y"]
-                return {
-                    "train_df": df,
-                    "features": features,
-                    "label": "y",
-                    "protected": "pregnant",  # demo choice
-                }
-            else:
-                df = self._load_adult(use_cache_only)
-                # add binary sex column for fairness analysis
-                df["sex_bin"] = df["sex"].map(lambda v: 1 if v.lower().startswith("male") else 0)
-                features = [c for c in df.columns if c not in ["y", "sex_bin"]]
-                return {
-                    "train_df": df,
-                    "features": features,
-                    "label": "y",
-                    "protected": "sex_bin",
-                }
+        if dataset == "Pima Diabetes":
+            df = self._load_pima(use_cache_only)
+        elif dataset == "Adult Income":
+            df = self._load_adult(use_cache_only)
+        else:
+            raise RuntimeError(f"Unknown dataset {dataset}")
 
-        return state or {}
+        df, features, sensitive_name = self._preprocess(df, dataset)
 
-    # -----------------
-    # Pima loader
-    # -----------------
-    def _load_pima(self, use_cache_only=False) -> pd.DataFrame:
-        cache_path = self.data_dir / "pima_diabetes.csv"
+        # Train/test split
+        train_df, test_df = train_test_split(df, test_size=0.3, random_state=42, stratify=df["y"])
 
-        if cache_path.exists():
-            df = pd.read_csv(cache_path)
-            return self._normalize_pima(df)
-
-        if use_cache_only:
-            raise RuntimeError("Pima dataset not found. Please add data/pima_diabetes.csv.")
-
-        last_exc = None
-        for url in self.PIMA_URLS:
-            try:
-                df = pd.read_csv(url, header=None)
-                if df.shape[1] == 9:
-                    df.columns = self.PIMA_COLS
-                df = self._normalize_pima(df)
-                df.to_csv(cache_path, index=False)
-                return df
-            except Exception as e:
-                last_exc = e
-
-        raise RuntimeError(f"Failed to download Pima dataset. Last error: {last_exc}")
-
-    def _normalize_pima(self, df: pd.DataFrame) -> pd.DataFrame:
-        if df.shape[1] >= 9:
-            df = df.iloc[:, :9]
-            df.columns = self.PIMA_COLS
-        for c in df.columns[:-1]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        df["y"] = df["y"].astype(int)
-        df = df.dropna().reset_index(drop=True)
-        return df
-
-    # -----------------
-    # Adult loader
-    # -----------------
-    def _load_adult(self, use_cache_only=False) -> pd.DataFrame:
-        cache_path = self.data_dir / "adult.csv"
-
-        if cache_path.exists():
-            return self._parse_adult(cache_path)
-
-        if use_cache_only:
-            raise RuntimeError("Adult dataset not found. Please add data/adult.csv.")
-
-        last_exc = None
-        for url in self.ADULT_URLS:
-            try:
-                df = pd.read_csv(url, header=None)
-                return self._normalize_adult(df, cache_path)
-            except Exception as e:
-                last_exc = e
-
-        raise RuntimeError(f"Failed to download Adult dataset. Last error: {last_exc}")
-
-    def _parse_adult(self, path: Path) -> pd.DataFrame:
-        try:
-            df = pd.read_csv(path, header=None)
-            return self._normalize_adult(df, None)
-        except Exception:
-            df = pd.read_csv(path)  # maybe has headers
-            return self._normalize_adult(df, None)
-
-    def _normalize_adult(self, df: pd.DataFrame, cache_path: Path) -> pd.DataFrame:
-        if df.shape[1] >= 15:
-            df = df.iloc[:, :15]
-            df.columns = self.ADULT_COLS
-
-        for c in df.select_dtypes(include="object").columns:
-            df[c] = df[c].astype(str).str.strip()
-            df[c] = df[c].replace("?", pd.NA)
-
-        if "y" not in df.columns:
-            df.columns = list(df.columns[:-1]) + ["y"]
-
-        df["y"] = df["y"].map(
-            lambda v: 1 if str(v).strip().startswith(">50K") else 0
-        )
-
-        df = df.dropna().reset_index(drop=True)
-
-        if cache_path:
-            df.to_csv(cache_path, index=False)
-
-        return df
+        return {
+            "train_df": train_df,
+            "test_df": test_df,
+            "features": features,
+            "sensitive_name": sensitive_name,
+        }
