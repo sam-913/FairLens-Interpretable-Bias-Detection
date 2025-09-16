@@ -1,96 +1,25 @@
 # pmas/agents/data_agent.py
-import os
+"""
+DataAgent: loads datasets used by the P-MAS demo.
+Supports:
+ - Pima Indians Diabetes (small / fast)
+ - Adult Income (larger; will try multiple mirrors and save a local cache)
+This version is robust for offline/Streamlit Cloud deployment.
+"""
+
 from pathlib import Path
-import pandas as pd
-from sklearn.model_selection import train_test_split
-
-
-class DataAgent:
-    """
-    DataAgent for loading and preparing datasets.
-    Supports:
-      - Pima Diabetes dataset
-      - Adult Income dataset
-    """
-
-    LOCAL_PATH = Path("data")
-    AGE_CUTOFF = 30
-
-    # Canonical Pima column names
-    PIMA_CANONICAL = [
-        "pregnant", "glucose", "pressure", "triceps", "insulin",
-        "mass", "pedigree", "age", "y"
-    ]
-    PIMA_URLS = [
-        "https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv",
-        "https://raw.githubusercontent.com/selva86/datasets/master/PimaIndiansDiabetes.csv",
-        "https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv",
-    ]
-
-    # Adult dataset
-    ADULT_URLS = [
-        "https://raw.githubusercontent.com/selva86/datasets/master/Adult.csv",
-        "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
-    ]
-    ADULT_LOCAL = LOCAL_PATH / "adult.csv"
-
-    def __init__(self, test_size=0.30, seed=42):
-        self.test_size = test_size
-        self.seed = seed
-        os.makedirs(self.LOCAL_PATH, exist_ok=True)
-
-    # -------------------------
-    # helper: download CSV
-    # -------------------------
-    def _download_csv(self, url, timeout=12):
-        import requests, io
-        r = requests.get(url, timeout=timeout)
-        r.raise_for_status()
-        content = r.content
-        try:
-            return pd.read_csv(io.BytesIO(content))
-        except Exception:
-            return pd.read_csv(io.BytesIO(content), header=None)
-
-    # -------------------------
-    # PIMA LOADER
-    # -------------------------
-    def _load_pima(self):
-        for url in self.PIMA_URLS:
-            try:
-                df = self._download_csv(url)
-                # normalize headers
-                df.columns = [str(c).strip().lower() for c in df.columns]
-
-                # Case 1: proper headers
-                if set(self.PIMA_CANONICAL).issubset(set(df.columns)):
-                    df = df[self.PIMA_CANONICAL]
-                    df = df.dropna().reset_index(drop=True)
-                    df["y"] = df["y"].astype(int)
-                    return df
-
-                # Case 2: headerless numeric data
-                if df.shape[1] == 9:
-                    df.columns = self.PIMA_CANONICAL
-                    df = df.dropna().reset_index(drop=True)
-                    df["y"] = df["y"].astype(int)
-                    return df
-            except Exception:
-                continue
-        raise RuntimeError("Failed to download a suitable Pima dataset from known mirrors.")
-
-    # -------------------------
-    # ADULT LOADER
-    # -------------------------
-    # pmas/agents/data_agent.py
-# Replace the adult-loading logic with this robust loader
-
 import os
 import pandas as pd
-import urllib.error
-from pathlib import Path
+import logging
+from typing import Optional
+
+LOG = logging.getLogger(__name__)
 
 class DataAgent:
+    # Pima canonical column names (used by other agents)
+    PIMA_COLS = ["pregnant","glucose","pressure","triceps","insulin","mass","pedigree","age","class"]
+
+    # Adult dataset mirrors to try (order matters)
     ADULT_URLS = [
         "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
         "https://raw.githubusercontent.com/selva86/datasets/master/Adult.csv",
@@ -102,21 +31,128 @@ class DataAgent:
         "hours_per_week","native_country","y"
     ]
 
-    def _load_adult(self, use_cache_only: bool = False):
+    def __init__(self):
+        self.data_dir = Path("data")
+        self.data_dir.mkdir(exist_ok=True)
+
+    def perform(self, action: str, params: dict = None, state: dict = None):
         """
-        Robust adult loader:
+        action: 'load' or 'prepare' (the orchestrator uses 'load' semantics)
+        params: {"dataset": "Pima" or "Adult", "use_cache_only": bool}
+        """
+        params = params or {}
+        dataset = params.get("dataset", params.get("dataset_choice", "Pima"))
+        use_cache_only = params.get("use_cache_only", False)
+
+        if action == "load":
+            if str(dataset).lower().startswith("pima"):
+                return self._load_pima(use_cache_only=use_cache_only)
+            else:
+                return self._load_adult(use_cache_only=use_cache_only)
+
+        # default behaviour for other orchestrator calls: return nothing
+        return {}
+
+    # ---------------------------
+    # Pima loader
+    # ---------------------------
+    def _load_pima(self, use_cache_only: bool = False) -> pd.DataFrame:
+        """
+        Download or load cached Pima Indians Diabetes dataset and normalize columns.
+        Accepts either a cached csv at data/pima_diabetes.csv or tries known mirrors.
+        """
+        cached = self.data_dir / "pima_diabetes.csv"
+        # if cached exists, use it
+        if cached.exists():
+            df = pd.read_csv(cached)
+            df = self._normalize_pima(df)
+            return df
+
+        if use_cache_only:
+            raise RuntimeError("Pima dataset not found in data/pima_diabetes.csv (use_cache_only=True).")
+
+        # try known mirror (jbrownlee)
+        mirrors = [
+            "https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv",
+            "https://raw.githubusercontent.com/selva86/datasets/master/PimaIndiansDiabetes.csv"
+        ]
+        last_exc = None
+        for url in mirrors:
+            try:
+                df = pd.read_csv(url, header=None)
+                # if it's the jbrownlee raw data (no header, 9 cols) assign canonical names
+                if df.shape[1] == 9:
+                    df.columns = self.PIMA_COLS
+                else:
+                    # if selva86 variant has named columns, try that
+                    try:
+                        df = pd.read_csv(url)
+                    except Exception:
+                        pass
+                df = self._normalize_pima(df)
+                # save cache
+                try:
+                    df.to_csv(cached, index=False)
+                except Exception:
+                    pass
+                return df
+            except Exception as e:
+                last_exc = e
+                continue
+
+        raise RuntimeError(f"Pima dataset could not be downloaded: {last_exc}")
+
+    def _normalize_pima(self, df: pd.DataFrame) -> pd.DataFrame:
+        # ensure canonical columns exist
+        cols = list(df.columns)
+        if set(self.PIMA_COLS).issubset(set(cols)):
+            # ok
+            df = df[self.PIMA_COLS].copy()
+        else:
+            # try to handle variations (e.g., extra columns from some mirrors)
+            # If the last column is the class label and there are 9 cols, map by position
+            if df.shape[1] >= 9:
+                df = df.iloc[:, :9]
+                df.columns = self.PIMA_COLS
+            else:
+                raise RuntimeError(f"Pima dataset missing expected columns. Found: {list(df.columns)}")
+        # drop rows with NaNs if any, and coerce numeric columns
+        for c in ["pregnant","glucose","pressure","triceps","insulin","mass","pedigree","age"]:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        df = df.dropna().reset_index(drop=True)
+        # ensure class is integer 0/1 (some sources use '1'/'0' or strings)
+        df["class"] = df["class"].astype(int)
+        return df
+
+    # ---------------------------
+    # Adult loader (robust)
+    # ---------------------------
+    def _load_adult(self, use_cache_only: bool = False) -> pd.DataFrame:
+        """
+        Robust Adult loader:
          - prefer existing local cache `data/adult.csv`
          - otherwise try a list of mirrors (ADULT_URLS)
          - if all fail and use_cache_only=True, raise informative error
         """
-        cache_path = Path("data") / "adult.csv"
+        cache_path = self.data_dir / "adult.csv"
         # 1) cache-first
         if cache_path.exists():
-            df = pd.read_csv(cache_path, header=None, names=self.ADULT_COLS)
-            # sanitize trailing spaces in category text
-            for c in df.select_dtypes(include="object").columns:
-                df[c] = df[c].str.strip()
-            return df
+            try:
+                df = pd.read_csv(cache_path, header=None)
+                # if matches expected shape, assign canonical names
+                if df.shape[1] == len(self.ADULT_COLS):
+                    df.columns = self.ADULT_COLS
+                else:
+                    # attempt reading with header (selva86 variant)
+                    try:
+                        df = pd.read_csv(cache_path)
+                    except Exception:
+                        pass
+                df = self._sanitize_adult(df)
+                return df
+            except Exception as e:
+                LOG.warning("Failed to parse cached adult.csv: %s", e)
+                # fallthrough to try mirrors or raise if cache_only
 
         if use_cache_only:
             raise RuntimeError(
@@ -127,32 +163,30 @@ class DataAgent:
         last_exc = None
         for url in self.ADULT_URLS:
             try:
-                df = pd.read_csv(url, header=None)
-                # attempt to normalize columns if URL has header or different shape
-                if df.shape[1] == len(self.ADULT_COLS):
-                    df.columns = self.ADULT_COLS
+                # read raw first
+                df_try = pd.read_csv(url, header=None)
+                # if correct width, set column names
+                if df_try.shape[1] == len(self.ADULT_COLS):
+                    df_try.columns = self.ADULT_COLS
                 else:
-                    # try reading with no header and assigning canonical names
-                    df.columns = list(range(df.shape[1]))
-                    # if it's in selva86 format (has header), attempt to match common names
+                    # try reading with header fallback
                     try:
-                        df = pd.read_csv(url)
-                        df = df.rename(columns=lambda s: s.strip())
+                        df_try = pd.read_csv(url)
                     except Exception:
+                        # if still odd, continue to next mirror
                         pass
-                # sanitize text fields
-                for c in df.select_dtypes(include="object").columns:
-                    df[c] = df[c].str.strip()
-                # save a local cache copy for future runs
+                # sanitize
+                df_try = self._sanitize_adult(df_try)
+                # save a cache copy (best-effort)
                 try:
-                    os.makedirs("data", exist_ok=True)
-                    df.to_csv(cache_path, index=False)
+                    os.makedirs(self.data_dir, exist_ok=True)
+                    df_try.to_csv(cache_path, index=False)
                 except Exception:
                     pass
-                return df
+                return df_try
             except Exception as e:
                 last_exc = e
-                # continue trying next mirror
+                continue
 
         # 3) all mirrors failed
         raise RuntimeError(
@@ -161,78 +195,34 @@ class DataAgent:
             f"Last exception: {last_exc}"
         )
 
-
-    # -------------------------
-    # Adult postprocess
-    # -------------------------
-    def _postprocess_adult(self, df):
-        # normalize label
-        if "income" not in df.columns and "class" in df.columns:
-            df = df.rename(columns={"class": "income"})
-        if "income" in df.columns and "y" not in df.columns:
-            df["income"] = df["income"].astype(str)
-            df["y"] = df["income"].apply(
-                lambda x: 1 if (">" in x and "50" in x) or (">50" in x) else 0
-            )
-
-        # create sex_bin
-        if "sex" in df.columns and "sex_bin" not in df.columns:
-            df["sex_bin"] = df["sex"].apply(
-                lambda s: 1 if str(s).strip().lower().startswith("m") else 0
-            )
-        return df
-
-    # -------------------------
-    # perform() entrypoint
-    # -------------------------
-    def perform(self, action, params, state=None):
-        if action != "load":
-            raise NotImplementedError(action)
-
-        dataset = params.get("dataset", "Pima Diabetes")
-        use_cache_only = params.get("use_cache_only", False)
-
-        if dataset == "Pima Diabetes":
-            df = self._load_pima()
-            df["age_group"] = (df["age"] >= self.AGE_CUTOFF).astype(int)
-            FEATURES = [
-                "pregnant","glucose","pressure","triceps","insulin",
-                "mass","pedigree","age"
-            ]
-            sensitive_name = "age_group"
-
-        elif dataset == "Adult Income":
-            df = self._load_adult(use_cache_only=use_cache_only)
-            # choose candidate features
-            candidate_features = [
-                c for c in ["age","education_num","capital_gain","capital_loss","hours_per_week"]
-                if c in df.columns
-            ]
-            if not candidate_features:
-                candidate_features = [c for c in df.select_dtypes(include=["number"]).columns
-                                      if c not in ("sex_bin","y")]
-            FEATURES = candidate_features[:5]
-            sensitive_name = "sex_bin"
-            if "y" not in df.columns:
-                raise RuntimeError("Adult loader failed to produce label 'y'")
-
+    def _sanitize_adult(self, df: pd.DataFrame) -> pd.DataFrame:
+        # If the dataset has an extra unnamed column or trailing comma, drop empty columns
+        # Trim whitespace from string columns and normalize the label column to binary 0/1
+        # Attempt to ensure we have the expected columns; if not, try best-effort mapping.
+        if df.shape[1] == len(self.ADULT_COLS):
+            df.columns = self.ADULT_COLS
         else:
-            raise ValueError(f"Unknown dataset: {dataset}")
+            # If dataset has header with different names, try to align 'y' or 'income' column
+            cols = list(df.columns)
+            # common label names:
+            label_candidates = [c for c in cols if str(c).lower() in ("income","y","class","target")]
+            if label_candidates:
+                label_col = label_candidates[0]
+                df = df.rename(columns={label_col: "y"})
+            # if numeric columns exist, we keep as-is; else try to coerce
+        # strip whitespace for object types
+        for c in df.select_dtypes(include="object").columns:
+            df[c] = df[c].astype(str).str.strip()
+            # also convert '?' to NaN
+            df[c] = df[c].replace("?", pd.NA)
 
-        # split
-        try:
-            train_df, test_df = train_test_split(
-                df, test_size=self.test_size, random_state=self.seed, stratify=df["y"]
-            )
-        except Exception:
-            train_df, test_df = train_test_split(
-                df, test_size=self.test_size, random_state=self.seed
-            )
+        # normalize label column to 0/1 if present
+        if "y" in df.columns:
+            df["y"] = df["y"].map(lambda v: 1 if str(v).strip().endswith(">50K") or str(v).strip().endswith(">50K.") or str(v).strip().endswith("1") else 0)
+        else:
+            # fallback: if last column looks like the label
+            df.columns = list(df.columns[:-1]) + ["y"]
+            df["y"] = df["y"].map(lambda v: 1 if str(v).strip().endswith(">50K") or str(v).strip().endswith(">50K.") else 0)
 
-        return {
-            "train_df": train_df.reset_index(drop=True),
-            "test_df": test_df.reset_index(drop=True),
-            "features": FEATURES,
-            "sensitive_name": sensitive_name,
-            "dataset": dataset,
-        }
+        df = df.dropna().reset_index(drop=True)
+        return df
