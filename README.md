@@ -1,7 +1,12 @@
 # FairLens — Interpretable Bias Detection
 
-**FairLens** is a fairness-aware, interpretable machine learning demo.  
-It combines **multi-agent orchestration**, **Fairlearn** (bias mitigation), and **SHAP** (explainability) to detect, quantify, and mitigate bias across demographic groups.
+
+FairLens is a **fairness-aware ML demo** that combines:
+- **Bias Detection** — Quantify disparities in accuracy, false positive/negative rates across groups  
+- **Bias Mitigation** — Apply methods like **Reweighting** and **Exponentiated Gradient (Fairlearn)**  
+- **Interpretability** — Use **SHAP explainability** to visualize feature importance  
+
+Built as a **multi-agent pipeline** with a polished **Streamlit UI**, it highlights responsible AI practices for healthcare and income prediction datasets.
 
 ---
 
@@ -23,71 +28,30 @@ It combines **multi-agent orchestration**, **Fairlearn** (bias mitigation), and 
 
 ## 🌐 Demo (Streamlit)
 
-Run the interactive dashboard locally:
+## 🚀 Live Demo
+👉 [Try the Streamlit app here]([https://your-streamlit-app-link](https://fairlens.streamlit.app/))  
 
-```bash
-streamlit run webui/streamlit_app.py
-🔗 If hosted: Streamlit Demo (optional link here)
+- Dataset toggle: **Pima Diabetes** (healthcare) and **Adult Income** (socioeconomic)  
+- Compare **Baseline vs Mitigation** side-by-side  
+- Visualize **SHAP explanations** and **fairness gaps** (e.g., FPR difference, accuracy difference)  
 
-(Tip: admissions committees may prefer local reproducibility, so both options are explained.)
+---
 
-📸 Screenshots
-Streamlit Dashboard (Pima Diabetes)
+## 📊 Example Results
 
-Streamlit Dashboard (Adult Income)
+**Overall metrics (Baseline vs Reweight vs ExpGrad):**
 
-🚀 Getting Started
-1. Clone & set up
-bash
-Copy code
-git clone https://github.com/<your-username>/FairLens-Multiagent-ML.git
-cd FairLens-Multiagent-ML
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-2. Run Streamlit demo
-bash
-Copy code
-streamlit run webui/streamlit_app.py
-Choose dataset (Pima or Adult)
+| Metric     | Baseline | Reweight | ExpGrad |
+|------------|----------|----------|---------|
+| Accuracy   | 0.74     | 0.74     | 0.75    |
+| Precision  | 0.67     | 0.67     | 0.71    |
+| Recall     | 0.50     | 0.50     | 0.49    |
 
-Run baseline / mitigation pipelines
+**Fairness gap (FPR difference):** reduced after mitigation.  
 
-Compare fairness metrics & SHAP plots
+---
 
-3. Generate static report
-bash
-Copy code
-python generate_report.py
-This creates report.ipynb with metrics and SHAP visualizations.
-👉 To include live outputs, open the notebook in VS Code and Run All.
-
-📊 Example Results
-Overall metrics (Adult Income, cache-only):
-
-metric	baseline	reweight	expgrad
-accuracy	0.815	0.813	0.781
-precision	0.701	0.756	0.629
-recall	0.405	0.329	0.217
-
-Fairness gap (FPR difference):
-
-Baseline: 0.209
-
-Reweight: 0.209
-
-Expgrad: 0.047
-
-🛠️ Tech Stack
-Python 3.12
-
-Streamlit — interactive dashboard
-
-Fairlearn — fairness metrics & reductions
-
-SHAP — model interpretability
-
-Scikit-learn / Pandas / Matplotlib
+## 📂 Project Structure
 
 📂 Repo Structure
 arduino
@@ -106,11 +70,42 @@ outputs/
 report.ipynb
 requirements.txt
 README.md
-💡 Motivation
-Bias in ML models can have serious social consequences.
-This project demonstrates a practical, interpretable pipeline for bias detection & mitigation — useful for learning fairness concepts and for showcasing reproducible ML research.
+
+---
+
+## 🛠️ Tech Stack
+
+- **Python 3.12**
+- [scikit-learn](https://scikit-learn.org/) — ML models  
+- [Fairlearn](https://fairlearn.org/) — Fairness metrics & reductions  
+- [SHAP](https://shap.readthedocs.io/) — Interpretability  
+- [Streamlit](https://streamlit.io/) — UI  
+
+---
+
+## 📘 Report
+A reproducible notebook `report.ipynb` is included with:  
+- End-to-end pipeline runs  
+- SHAP plots inline  
+- Fairness gap calculations  
+
+---
+
+## ✨ Why This Project?
+FairLens demonstrates **responsible AI deployment**:
+- Detecting and explaining **bias**  
+- Applying **mitigation techniques**  
+- Providing a **transparent, interactive UI**  
+
+This is especially relevant for **AI in healthcare and socioeconomic decision-making**.
+
+---
 
 📜 License
 MIT License. Free to use and adapt.
 
+---
+
 👩‍💻 Built by Samriddhi Sharma — fairness, interpretability, and ML systems.
+
+---
