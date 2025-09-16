@@ -82,69 +82,85 @@ class DataAgent:
     # -------------------------
     # ADULT LOADER
     # -------------------------
-    def _load_adult(self, use_cache_only=False):
-        import io, requests
+    # pmas/agents/data_agent.py
+# Replace the adult-loading logic with this robust loader
 
-        # canonical UCI columns
-        uci_cols = [
-            "age","workclass","fnlwgt","education","education_num","marital_status",
-            "occupation","relationship","race","sex","capital_gain","capital_loss",
-            "hours_per_week","native_country","income"
-        ]
+import os
+import pandas as pd
+import urllib.error
+from pathlib import Path
 
-        # --- 1) Check local cache ---
-        if self.ADULT_LOCAL.exists():
-            # Try headered read
-            try:
-                df = pd.read_csv(self.ADULT_LOCAL)
-                cols = [c.lower() for c in df.columns]
-                if "income" in cols or "y" in cols or "class" in cols:
-                    return self._postprocess_adult(df)
-            except Exception:
-                pass
+class DataAgent:
+    ADULT_URLS = [
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
+        "https://raw.githubusercontent.com/selva86/datasets/master/Adult.csv",
+        "https://raw.githubusercontent.com/jbrownlee/Datasets/master/adult.csv",
+    ]
+    ADULT_COLS = [
+        "age","workclass","fnlwgt","education","education_num","marital_status",
+        "occupation","relationship","race","sex","capital_gain","capital_loss",
+        "hours_per_week","native_country","y"
+    ]
 
-            # Try headerless read
-            try:
-                df = pd.read_csv(self.ADULT_LOCAL, header=None)
-                if df.shape[1] == len(uci_cols):
-                    df.columns = uci_cols
-                    return self._postprocess_adult(df)
-            except Exception:
-                pass
+    def _load_adult(self, use_cache_only: bool = False):
+        """
+        Robust adult loader:
+         - prefer existing local cache `data/adult.csv`
+         - otherwise try a list of mirrors (ADULT_URLS)
+         - if all fail and use_cache_only=True, raise informative error
+        """
+        cache_path = Path("data") / "adult.csv"
+        # 1) cache-first
+        if cache_path.exists():
+            df = pd.read_csv(cache_path, header=None, names=self.ADULT_COLS)
+            # sanitize trailing spaces in category text
+            for c in df.select_dtypes(include="object").columns:
+                df[c] = df[c].str.strip()
+            return df
 
-            if use_cache_only:
-                raise RuntimeError("Cached data/adult.csv exists but could not be parsed.")
-            # else fallthrough to downloads
-
-        # --- 2) Cache-only and no file ---
         if use_cache_only:
             raise RuntimeError(
-                "Cache-only mode requested but data/adult.csv not found.\n"
-                "Download manually with:\n"
-                "  mkdir -p data\n"
-                "  curl -L -o data/adult.csv https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+                "Adult dataset not found in repo. Please add data/adult.csv for offline runs."
             )
 
-        # --- 3) Try downloads ---
+        # 2) try mirrors
         last_exc = None
         for url in self.ADULT_URLS:
             try:
-                df = self._download_csv(url)
-                if df.shape[1] == len(uci_cols):
-                    df.columns = uci_cols
-                df = self._postprocess_adult(df)
-                # save to cache
-                df.to_csv(self.ADULT_LOCAL, index=False)
+                df = pd.read_csv(url, header=None)
+                # attempt to normalize columns if URL has header or different shape
+                if df.shape[1] == len(self.ADULT_COLS):
+                    df.columns = self.ADULT_COLS
+                else:
+                    # try reading with no header and assigning canonical names
+                    df.columns = list(range(df.shape[1]))
+                    # if it's in selva86 format (has header), attempt to match common names
+                    try:
+                        df = pd.read_csv(url)
+                        df = df.rename(columns=lambda s: s.strip())
+                    except Exception:
+                        pass
+                # sanitize text fields
+                for c in df.select_dtypes(include="object").columns:
+                    df[c] = df[c].str.strip()
+                # save a local cache copy for future runs
+                try:
+                    os.makedirs("data", exist_ok=True)
+                    df.to_csv(cache_path, index=False)
+                except Exception:
+                    pass
                 return df
             except Exception as e:
                 last_exc = e
-                continue
+                # continue trying next mirror
 
+        # 3) all mirrors failed
         raise RuntimeError(
-            "Failed to download the Adult Income dataset from known mirrors.\n"
-            "Please manually download and save to data/adult.csv.\n"
+            "Failed to download the Adult Income dataset from known mirrors. "
+            "Please manually download and save it to data/adult.csv. "
             f"Last exception: {last_exc}"
         )
+
 
     # -------------------------
     # Adult postprocess
