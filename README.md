@@ -55,22 +55,27 @@ Built as a **multi-agent pipeline** with a polished **Streamlit UI**, it highlig
 ## 📂 Project Structure
 
 📂 Repo Structure
-arduino
-Copy code
-pmas/
-  agents/              # data, model, mitigation, explainability agents
-  main.py              # orchestrates full pipeline
-  orchestrator.py
-webui/
-  streamlit_app.py     # polished dashboard
-tools/
-  create_demo_screenshots.py
-outputs/
-  demo_pima.png
-  demo_adult.png
-report.ipynb
-requirements.txt
-README.md
+FairLens/
+│
+├── pmas/ # Core multi-agent system
+│ ├── agents/ # Modular agents (data, model, explain, mitigate)
+│ ├── orchestrator.py # Orchestrator
+│ └── main.py # Pipeline entrypoint
+│
+├── webui/ # Streamlit dashboard
+│ └── streamlit_app.py
+│
+├── outputs/ # Generated SHAP plots, metrics, CSVs
+├── tools/ # Reporting utilities
+│ └── generate_report.py # Creates report.ipynb
+│
+├── assets/ # Screenshots for README
+│ ├── streamlit_dashboard.png
+│ └── shap_example.png
+│
+├── report.ipynb # Reproducible analysis notebook
+├── requirements.txt
+└── README.md
 
 ---
 
@@ -105,8 +110,6 @@ This is especially relevant for **AI in healthcare and socioeconomic decision-ma
 📜 License
 MIT License. Free to use and adapt.
 
----
 
 👩‍💻 Built by Samriddhi Sharma — fairness, interpretability, and ML systems.
 
----
