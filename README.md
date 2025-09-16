@@ -1,6 +1,3 @@
-# FairLens — Interpretable Bias Detection (Pima + Adult)
-
-
 # FairLens — Interpretable Bias Detection
 
 **FairLens** is a fairness-aware, interpretable machine learning demo.  
@@ -24,20 +21,25 @@ It combines **multi-agent orchestration**, **Fairlearn** (bias mitigation), and 
 
 ---
 
-## 📸 Screenshots
+## 🌐 Demo (Streamlit)
 
-### Streamlit Dashboard (Pima Diabetes)
-![Demo Screenshot — Pima Diabetes](outputs/demo_pima.png)
+Run the interactive dashboard locally:
 
-### Streamlit Dashboard (Adult Income)
-![Demo Screenshot — Adult Income](outputs/demo_adult.png)
-
----
-
-## 🚀 Getting Started
-
-### 1. Clone & set up
 ```bash
+streamlit run webui/streamlit_app.py
+🔗 If hosted: Streamlit Demo (optional link here)
+
+(Tip: admissions committees may prefer local reproducibility, so both options are explained.)
+
+📸 Screenshots
+Streamlit Dashboard (Pima Diabetes)
+
+Streamlit Dashboard (Adult Income)
+
+🚀 Getting Started
+1. Clone & set up
+bash
+Copy code
 git clone https://github.com/<your-username>/FairLens-Multiagent-ML.git
 cd FairLens-Multiagent-ML
 python3 -m venv .venv
