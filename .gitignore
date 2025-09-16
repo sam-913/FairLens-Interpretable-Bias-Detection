@@ -1,8 +1,23 @@
-.venv/
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .DS_Store
-data/
-outputs/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Jupyter checkpoints
 .ipynb_checkpoints/
 
+# Data files (optional: keep small demo ones)
+data/*.csv
+!data/pima_diabetes.csv   # keep this one if you want it in repo
+!data/adult.csv           # keep this one too if you want offline demo
+
+# Outputs
+outputs/*.png
+outputs/*.csv
+outputs/*.xlsx

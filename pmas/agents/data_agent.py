@@ -3,139 +3,220 @@ import os
 from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
-import io
-import requests
+
 
 class DataAgent:
     """
-    Robust loader for Pima Indians Diabetes.
-    Tries multiple known mirrors. Handles files with or without headers.
-    If a downloaded CSV does not resemble the Pima dataset (9 canonical columns),
-    it will skip that URL and try the next one.
-    Produces train/test splits and a binary sensitive attribute 'age_group'.
+    DataAgent for loading and preparing datasets.
+    Supports:
+      - Pima Diabetes dataset
+      - Adult Income dataset
     """
-    CANDIDATE_URLS = [
-        # common mirrors (try these in order)
-        "https://raw.githubusercontent.com/selva86/datasets/master/PimaIndiansDiabetes.csv",
-        "https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv",
-        "https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv",
-        # fallback raw UCI (may return headerless)
-        "https://archive.ics.uci.edu/ml/machine-learning-databases/pima-indians-diabetes/pima-indians-diabetes.data"
-    ]
-    LOCAL_PATH = Path("data/pima_diabetes.csv")
+
+    LOCAL_PATH = Path("data")
     AGE_CUTOFF = 30
 
-    # canonical column names for Pima dataset
-    CANONICAL_COLS = ["pregnant","glucose","pressure","triceps","insulin","mass","pedigree","age","y"]
+    # Canonical Pima column names
+    PIMA_CANONICAL = [
+        "pregnant", "glucose", "pressure", "triceps", "insulin",
+        "mass", "pedigree", "age", "y"
+    ]
+    PIMA_URLS = [
+        "https://raw.githubusercontent.com/jbrownlee/Datasets/master/pima-indians-diabetes.data.csv",
+        "https://raw.githubusercontent.com/selva86/datasets/master/PimaIndiansDiabetes.csv",
+        "https://raw.githubusercontent.com/plotly/datasets/master/diabetes.csv",
+    ]
 
-    def __init__(self, test_size=0.30, seed=42, force_redownload=False):
+    # Adult dataset
+    ADULT_URLS = [
+        "https://raw.githubusercontent.com/selva86/datasets/master/Adult.csv",
+        "https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data",
+    ]
+    ADULT_LOCAL = LOCAL_PATH / "adult.csv"
+
+    def __init__(self, test_size=0.30, seed=42):
         self.test_size = test_size
         self.seed = seed
-        self.force_redownload = force_redownload
+        os.makedirs(self.LOCAL_PATH, exist_ok=True)
 
-    def _read_csv_from_bytes(self, content: bytes):
-        """
-        Try to read CSV content with and without header.
-        Returns a DataFrame or raises.
-        """
-        # try read with pandas (let pandas infer header)
+    # -------------------------
+    # helper: download CSV
+    # -------------------------
+    def _download_csv(self, url, timeout=12):
+        import requests, io
+        r = requests.get(url, timeout=timeout)
+        r.raise_for_status()
+        content = r.content
         try:
-            df = pd.read_csv(io.BytesIO(content))
-            return df
+            return pd.read_csv(io.BytesIO(content))
         except Exception:
-            # try to read as headerless (comma separated)
-            df = pd.read_csv(io.BytesIO(content), header=None)
-            return df
+            return pd.read_csv(io.BytesIO(content), header=None)
 
-    def _download_if_missing(self):
-        # if a good local file exists and no force_redownload, return it
-        if self.LOCAL_PATH.exists() and not self.force_redownload:
+    # -------------------------
+    # PIMA LOADER
+    # -------------------------
+    def _load_pima(self):
+        for url in self.PIMA_URLS:
             try:
-                df = pd.read_csv(self.LOCAL_PATH)
-                # quick sanity: must contain canonical cols or 9 columns
-                cols = [c.lower() for c in df.columns]
-                if set(self.CANONICAL_COLS).issubset(set(cols)) or len(cols) == 9:
+                df = self._download_csv(url)
+                # normalize headers
+                df.columns = [str(c).strip().lower() for c in df.columns]
+
+                # Case 1: proper headers
+                if set(self.PIMA_CANONICAL).issubset(set(df.columns)):
+                    df = df[self.PIMA_CANONICAL]
+                    df = df.dropna().reset_index(drop=True)
+                    df["y"] = df["y"].astype(int)
                     return df
-                # otherwise treat as bad and redownload
+
+                # Case 2: headerless numeric data
+                if df.shape[1] == 9:
+                    df.columns = self.PIMA_CANONICAL
+                    df = df.dropna().reset_index(drop=True)
+                    df["y"] = df["y"].astype(int)
+                    return df
             except Exception:
-                try:
-                    self.LOCAL_PATH.unlink()
-                except Exception:
-                    pass
-
-        last_exc = None
-        for url in self.CANDIDATE_URLS:
-            try:
-                print(f"Attempting to download Pima CSV from: {url}")
-                r = requests.get(url, timeout=20)
-                r.raise_for_status()
-                content = r.content
-                df = self._read_csv_from_bytes(content)
-                # normalize column names to lowercase strings for checking
-                cols = [str(c).strip().lower() for c in df.columns]
-                # Accept if it already contains canonical column names
-                if set(self.CANONICAL_COLS).issubset(set(cols)):
-                    # good
-                    df.columns = cols
-                    os.makedirs(self.LOCAL_PATH.parent, exist_ok=True)
-                    df.to_csv(self.LOCAL_PATH, index=False)
-                    return df
-                # Accept if it has exactly 9 columns (likely headerless pima .data)
-                if len(cols) == 9:
-                    # assign canonical names
-                    print("Downloaded CSV has 9 columns; assigning canonical Pima column names.")
-                    df.columns = list(self.CANONICAL_COLS)
-                    os.makedirs(self.LOCAL_PATH.parent, exist_ok=True)
-                    df.to_csv(self.LOCAL_PATH, index=False)
-                    return df
-                # If columns look entirely different (e.g., v1..v34 or class label for different dataset),
-                # skip this URL and try the next one.
-                print(f"Downloaded CSV from {url} did not match expected Pima shape. Columns: {cols[:8]}... (len={len(cols)}) — skipping.")
                 continue
+        raise RuntimeError("Failed to download a suitable Pima dataset from known mirrors.")
+
+    # -------------------------
+    # ADULT LOADER
+    # -------------------------
+    def _load_adult(self, use_cache_only=False):
+        import io, requests
+
+        # canonical UCI columns
+        uci_cols = [
+            "age","workclass","fnlwgt","education","education_num","marital_status",
+            "occupation","relationship","race","sex","capital_gain","capital_loss",
+            "hours_per_week","native_country","income"
+        ]
+
+        # --- 1) Check local cache ---
+        if self.ADULT_LOCAL.exists():
+            # Try headered read
+            try:
+                df = pd.read_csv(self.ADULT_LOCAL)
+                cols = [c.lower() for c in df.columns]
+                if "income" in cols or "y" in cols or "class" in cols:
+                    return self._postprocess_adult(df)
+            except Exception:
+                pass
+
+            # Try headerless read
+            try:
+                df = pd.read_csv(self.ADULT_LOCAL, header=None)
+                if df.shape[1] == len(uci_cols):
+                    df.columns = uci_cols
+                    return self._postprocess_adult(df)
+            except Exception:
+                pass
+
+            if use_cache_only:
+                raise RuntimeError("Cached data/adult.csv exists but could not be parsed.")
+            # else fallthrough to downloads
+
+        # --- 2) Cache-only and no file ---
+        if use_cache_only:
+            raise RuntimeError(
+                "Cache-only mode requested but data/adult.csv not found.\n"
+                "Download manually with:\n"
+                "  mkdir -p data\n"
+                "  curl -L -o data/adult.csv https://archive.ics.uci.edu/ml/machine-learning-databases/adult/adult.data"
+            )
+
+        # --- 3) Try downloads ---
+        last_exc = None
+        for url in self.ADULT_URLS:
+            try:
+                df = self._download_csv(url)
+                if df.shape[1] == len(uci_cols):
+                    df.columns = uci_cols
+                df = self._postprocess_adult(df)
+                # save to cache
+                df.to_csv(self.ADULT_LOCAL, index=False)
+                return df
             except Exception as e:
                 last_exc = e
-                print(f"Download/read failed for {url}: {e}")
                 continue
-        raise RuntimeError("Failed to download a suitable Pima dataset from known mirrors.") from last_exc
 
-    def _normalize_and_prepare(self, df: pd.DataFrame):
-        df = df.copy()
-        # Lowercase columns
-        df.columns = [str(c).strip().lower() for c in df.columns]
+        raise RuntimeError(
+            "Failed to download the Adult Income dataset from known mirrors.\n"
+            "Please manually download and save to data/adult.csv.\n"
+            f"Last exception: {last_exc}"
+        )
 
-        # handle common name variants
-        rename_map = {}
-        if "diabetes" in df.columns:
-            rename_map["diabetes"] = "y"
-        if "outcome" in df.columns:
-            rename_map["outcome"] = "y"
-        if "bmi" in df.columns and "mass" not in df.columns:
-            rename_map["bmi"] = "mass"
-        if "skin" in df.columns and "triceps" not in df.columns:
-            rename_map["skin"] = "triceps"
-        if rename_map:
-            df = df.rename(columns=rename_map)
+    # -------------------------
+    # Adult postprocess
+    # -------------------------
+    def _postprocess_adult(self, df):
+        # normalize label
+        if "income" not in df.columns and "class" in df.columns:
+            df = df.rename(columns={"class": "income"})
+        if "income" in df.columns and "y" not in df.columns:
+            df["income"] = df["income"].astype(str)
+            df["y"] = df["income"].apply(
+                lambda x: 1 if (">" in x and "50" in x) or (">50" in x) else 0
+            )
 
-        # Final check
-        if not set(self.CANONICAL_COLS).issubset(set(df.columns)):
-            raise RuntimeError(f"Pima dataset missing expected columns after normalization. Found: {list(df.columns)}")
-
-        # keep only canonical columns and convert types
-        df = df[self.CANONICAL_COLS].copy()
-        # ensure numeric types
-        for c in self.CANONICAL_COLS:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        df = df.dropna().reset_index(drop=True)
-
-        # create age_group sensitive attribute
-        df["age_group"] = (df["age"] >= self.AGE_CUTOFF).astype(int)
-        df["y"] = df["y"].astype(int)
+        # create sex_bin
+        if "sex" in df.columns and "sex_bin" not in df.columns:
+            df["sex_bin"] = df["sex"].apply(
+                lambda s: 1 if str(s).strip().lower().startswith("m") else 0
+            )
         return df
 
+    # -------------------------
+    # perform() entrypoint
+    # -------------------------
     def perform(self, action, params, state=None):
-        if action == "load":
-            df = self._download_if_missing()
-            df = self._normalize_and_prepare(df)
-            train, test = train_test_split(df, test_size=self.test_size, random_state=self.seed, stratify=df["y"])
-            return {"train_df": train.reset_index(drop=True), "test_df": test.reset_index(drop=True)}
-        raise NotImplementedError(action)
+        if action != "load":
+            raise NotImplementedError(action)
+
+        dataset = params.get("dataset", "Pima Diabetes")
+        use_cache_only = params.get("use_cache_only", False)
+
+        if dataset == "Pima Diabetes":
+            df = self._load_pima()
+            df["age_group"] = (df["age"] >= self.AGE_CUTOFF).astype(int)
+            FEATURES = [
+                "pregnant","glucose","pressure","triceps","insulin",
+                "mass","pedigree","age"
+            ]
+            sensitive_name = "age_group"
+
+        elif dataset == "Adult Income":
+            df = self._load_adult(use_cache_only=use_cache_only)
+            # choose candidate features
+            candidate_features = [
+                c for c in ["age","education_num","capital_gain","capital_loss","hours_per_week"]
+                if c in df.columns
+            ]
+            if not candidate_features:
+                candidate_features = [c for c in df.select_dtypes(include=["number"]).columns
+                                      if c not in ("sex_bin","y")]
+            FEATURES = candidate_features[:5]
+            sensitive_name = "sex_bin"
+            if "y" not in df.columns:
+                raise RuntimeError("Adult loader failed to produce label 'y'")
+
+        else:
+            raise ValueError(f"Unknown dataset: {dataset}")
+
+        # split
+        try:
+            train_df, test_df = train_test_split(
+                df, test_size=self.test_size, random_state=self.seed, stratify=df["y"]
+            )
+        except Exception:
+            train_df, test_df = train_test_split(
+                df, test_size=self.test_size, random_state=self.seed
+            )
+
+        return {
+            "train_df": train_df.reset_index(drop=True),
+            "test_df": test_df.reset_index(drop=True),
+            "features": FEATURES,
+            "sensitive_name": sensitive_name,
+            "dataset": dataset,
+        }
