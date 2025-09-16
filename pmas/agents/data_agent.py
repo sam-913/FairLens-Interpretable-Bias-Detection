@@ -4,7 +4,7 @@ DataAgent for FairLens demo
 Supports:
   - Pima Indians Diabetes
   - Adult Income dataset
-Works offline (via cached CSV in data/) or online (via mirrors).
+Returns clean dict with train_df, features, label, and protected.
 """
 
 from pathlib import Path
@@ -52,11 +52,27 @@ class DataAgent:
 
         if action == "load":
             if str(dataset).lower().startswith("pima"):
-                return self._load_pima(use_cache_only)
+                df = self._load_pima(use_cache_only)
+                features = [c for c in df.columns if c != "y"]
+                return {
+                    "train_df": df,
+                    "features": features,
+                    "label": "y",
+                    "protected": "pregnant",  # demo choice
+                }
             else:
-                return self._load_adult(use_cache_only)
+                df = self._load_adult(use_cache_only)
+                # add binary sex column for fairness analysis
+                df["sex_bin"] = df["sex"].map(lambda v: 1 if v.lower().startswith("male") else 0)
+                features = [c for c in df.columns if c not in ["y", "sex_bin"]]
+                return {
+                    "train_df": df,
+                    "features": features,
+                    "label": "y",
+                    "protected": "sex_bin",
+                }
 
-        return {}
+        return state or {}
 
     # -----------------
     # Pima loader
