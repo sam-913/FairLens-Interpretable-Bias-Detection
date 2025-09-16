@@ -1,5 +1,6 @@
 # FairLens — Interpretable Bias Detection
 
+---
 
 FairLens is a **fairness-aware ML demo** that combines:
 - **Bias Detection** — Quantify disparities in accuracy, false positive/negative rates across groups  
